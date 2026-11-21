@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Stray Kids 記憶翻牌</title>
+<link rel="preload" as="image" href="back.jpg">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; min-height:100vh; font-family: system-ui, "Noto Sans TC", sans-serif;
+    background: linear-gradient(135deg,#667eea,#764ba2); color:#fff;
+    display:flex; flex-direction:column; align-items:center; padding:20px; }
+  h1 { margin:10px 0; }
+  .bar { display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; margin-bottom:16px; }
+  .stat { background:rgba(255,255,255,.2); padding:8px 14px; border-radius:10px; }
+  select, button { font-size:16px; padding:8px 14px; border:none; border-radius:10px; cursor:pointer; }
+  button { background:#ffd166; color:#333; font-weight:bold; }
+  #board { display:grid; gap:10px; width:min(92vw,520px); }
+  .card { aspect-ratio:1; cursor:pointer; touch-action:manipulation; user-select:none; -webkit-user-select:none; }
+  .inner { position:relative; width:100%; height:100%; }
+  .card.flipping .inner { animation:flip .3s ease; }
+  @keyframes flip { 0%{transform:scaleX(1)} 50%{transform:scaleX(0)} 100%{transform:scaleX(1)} }
+  .face { position:absolute; inset:0; border-radius:12px; display:flex; align-items:center; justify-content:center;
+    font-size:clamp(24px,7vw,44px); box-shadow:0 4px 10px rgba(0,0,0,.25); overflow:hidden; }
+  .front { background:#fff; visibility:hidden; }
+  .back { background:#111; }
+  .card.flipped .front, .card.matched .front { visibility:visible; }
+  .card.flipped .back, .card.matched .back { visibility:hidden; }
+  .card.matched .front { background:#06d6a0; }
+  .upload { background:#118ab2; padding:8px 14px; border-radius:10px; cursor:pointer; font-weight:bold; }
+  .front img, .back img { display:block; width:100%; height:100%; object-fit:cover; border-radius:8px; }
+  .front img { object-position:center 30%; }
+  .back img { object-position:center; }
+  #tip { margin:-6px 0 12px; font-size:14px; opacity:.9; text-align:center; }
+  #win { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; }
+  #win div { background:#fff; color:#333; padding:30px 40px; border-radius:16px; text-align:center; }
+</style>
+</head>
+<body>
+<h1>🧠 Stray Kids 記憶翻牌</h1>
+<div class="bar">
+  <select id="level">
+    <option value="4">簡單 4×4</option>
+    <option value="6">困難 6×6</option>
+  </select>
+  <label class="upload">📷 上傳自己的圖片<input type="file" id="files" accept="image/*" multiple hidden></label>
+  <button type="button" id="restart">重新開始</button>
+  <span class="stat">步數：<b id="moves">0</b></span>
+  <span class="stat">時間：<b id="time">0</b> 秒</span>
+</div>
+<div id="tip">簡單版用 8 張生日圖，困難版每局從 24 張照片隨機選 18 張</div>
+<div id="board"></div>
+<div id="win"><div><h2>🎉 恭喜過關！</h2><p id="result"></p><button type="button" id="playAgain">再玩一次</button></div></div>
+<script>
+const EMOJIS = ["🍎","🍌","🍇","🍉","🍓","🍒","🥝","🍍","🥕","🌽","🍩","🍪","🐶","🐱","🐼","🦊","🐸","🐵"];
+const board = document.getElementById("board");
+const BUILTIN=["img/1.jpg","img/2.jpg","img/3.jpg","img/4.jpg","img/5.jpg","img/6.jpg","img/7.jpg","img/8.jpg"];
+const HARD=["hard/1.jpg","hard/2.jpg","hard/3.jpg","hard/4.jpg","hard/5.jpg","hard/6.jpg","hard/7.jpg","hard/8.jpg","hard/9.jpg","hard/10.jpg","hard/11.jpg","hard/12.jpg","hard/13.jpg","hard/14.jpg","hard/15.jpg","hard/16.jpg","hard/17.jpg","hard/18.jpg","hard/19.jpg","hard/20.jpg","hard/21.jpg","hard/22.jpg","hard/23.jpg","hard/24.jpg"];
+const BACK="back.jpg";
+let mode="sk";
+let customImgs=[];
+let first=null, lock=false, moves=0, matched=0, total=0, timer=null, seconds=0;
+
+function preload(urls){
+  urls.forEach(u=>{ const i=new Image(); i.src=u; });
+}
+preload([BACK].concat(BUILTIN, HARD));
+
+function start(){
+  const n = +document.getElementById("level").value;
+  total = n*n/2;
+  const pool = mode==="custom" && customImgs.length ? customImgs : (n===4?BUILTIN:HARD);
+  const imgs = pool.slice().sort(()=>Math.random()-.5).slice(0,total).map(u=>({img:u}));
+  const fill = EMOJIS.slice().sort(()=>Math.random()-.5).slice(0,total-imgs.length).map(e=>({emoji:e}));
+  const picks = [...imgs,...fill];
+  const deck = [...picks,...picks].sort(()=>Math.random()-.5);
+  board.style.gridTemplateColumns = `repeat(${n},1fr)`;
+  board.innerHTML = "";
+  first=null; lock=false; moves=0; matched=0; seconds=0;
+  clearInterval(timer); timer=null;
+  update();
+  document.getElementById("win").style.display="none";
+  deck.forEach(e=>{
+    const c=document.createElement("div");
+    c.className="card"; c.dataset.v=e.img||e.emoji;
+    const face = e.img ? `<img src="${e.img}" alt="" draggable="false">` : e.emoji;
+    c.innerHTML=`<div class="inner"><div class="face back"><img src="${BACK}" alt="" draggable="false"></div><div class="face front">${face}</div></div>`;
+    c.addEventListener("click",()=>flip(c));
+    board.appendChild(c);
+  });
+}
+function anim(c){c.classList.remove("flipping");void c.offsetWidth;c.classList.add("flipping");}
+function update(){
+  document.getElementById("moves").textContent=moves;
+  document.getElementById("time").textContent=seconds;
+}
+function flip(c){
+  if(lock || c===first || c.classList.contains("matched")) return;
+  if(!timer) timer=setInterval(()=>{seconds++;update();},1000);
+  c.classList.add("flipped"); anim(c);
+  if(!first){ first=c; return; }
+  moves++; update();
+  if(first.dataset.v===c.dataset.v){
+    first.classList.add("matched"); c.classList.add("matched");
+    first=null; matched++;
+    if(matched===total){
+      clearInterval(timer);
+      document.getElementById("result").textContent=`共 ${moves} 步，用時 ${seconds} 秒`;
+      setTimeout(()=>document.getElementById("win").style.display="flex",500);
+    }
+  } else {
+    lock=true;
+    const a=first; first=null;
+    setTimeout(()=>{a.classList.remove("flipped");c.classList.remove("flipped");anim(a);anim(c);lock=false;},900);
+  }
+}
+document.getElementById("restart").onclick=start;
+document.getElementById("playAgain").onclick=start;
+document.getElementById("files").onchange=ev=>{
+  const fs=[...ev.target.files]; if(!fs.length) return;
+  Promise.all(fs.map(f=>new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f);})))
+    .then(urls=>{customImgs=urls; mode="custom"; start();});
+  ev.target.value="";
+};
+document.getElementById("level").onchange=start;
+start();
+</script>
+</body>
+</html>
